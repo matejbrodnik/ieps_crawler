@@ -59,3 +59,12 @@ All the specifics and decisions you make based on the instructions above and des
 Document also parameters that are needed for your crawler, specifics, problems that you had during the development and solutions.
 For the sites that are given in the instructions’ seed list and also for the whole crawldb together (for both separately) report general statistics of crawldb (number of sites, number of web pages, number of duplicates, number of binary documents by type, number of images, average number of images per web page, …).
 Visualize links and include images into the report. If the network is too big, take only a portion of it or high-level representation (e.g. interconnectedness of specific domains). Use visualization libraries such as D3js, visjs, sigmajs or gephi.
+
+## Submission
+
+Only one of the group members should make a submission of the assignment in moodle. The submission should contain only a link to the repository that contains the following which you will use for all the submissions during the course:
+
+- a file pa1/db
+- a file pa1/report.pdf - PDF report.
+- a file pa1/README.md - Short description of the project and instructions to install, set up and run the crawler.
+- a folder pa1/crawler - Implementation of the crawler.
