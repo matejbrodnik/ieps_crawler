@@ -7,3 +7,4 @@ TODO:
 - pridobivanje sitemap podatkov
 - respect robots.txt crawl delay
 - insert page_data into the database
+- CHECK for duplicate links in the DB
