@@ -115,14 +115,15 @@ def find_and_save_links(soup, site_id, page_id, hostname):
             if link.startswith('/'):  # stran znotraj domene
                 link = canonicalize('http://' + hostname + link)
                 if link not in frontier:
-                    page_new_id = check_and_insert_page(site_id, link) # check if a page with the url exists and insert it into the DB
-                    insert_link(page_id, page_new_id) # insert link into the database
+                    # check if a page with the url exists and insert it into the DB
+                    page_new_id = check_and_insert_page(site_id, link)
+                    insert_link(page_id, page_new_id)  # insert link into the database
                     frontier.append(link)
             elif link.startswith('http'):  # stran izven domene
                 link = canonicalize(link)
                 if 'gov.si' in link and link not in frontier:
                     page_new_id = check_and_insert_page(site_id, link)
-                    insert_link(page_id, page_new_id) # insert link into the datase
+                    insert_link(page_id, page_new_id)  # insert link into the datase
                     frontier.append(link)
 
 
@@ -196,7 +197,10 @@ def crawl_page(n, thread):
         # save the new page into the DB
         # links are canonicalized when they are detected
         html_content = html if content_type != 'BINARY' else None
-        if page_id is not None:
+        if content_type == 'DUPLICATE':
+            update_page(page_id, content_type, None, status_code, hash_code, datetime.now())
+            insert_link(page_id, get_duplicate_page_id(page_id, hash_code))
+        elif page_id is not None:
             # če stran že obstaja (url našli med parsanjem)
             update_page(page_id, content_type, html_content, status_code, hash_code, datetime.now())
         else:
@@ -305,6 +309,21 @@ def check_if_blank_page(url):
 
     cur = conn.cursor()
     cur.execute("SELECT id FROM crawldb.site WHERE url = %s AND hash_code IS NULL", url)
+    row = cur.fetchone()
+
+    # page with this link does not exist yet, insert it into the DB
+    result = row[0] if row is not None else None
+    cur.close()
+    conn.close()
+    return result
+
+
+def get_duplicate_page_id(page_id, hash_code):
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM crawldb.page WHERE hash_code=%s AND page_id != %s", (hash_code, page_id))
     row = cur.fetchone()
 
     # page with this link does not exist yet, insert it into the DB
