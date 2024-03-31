@@ -13,6 +13,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from bs4 import BeautifulSoup
+from datetime import datetime
+from io import StringIO
 
 WEB_DRIVER_LOCATION = "./geckodriver"
 TIMEOUT = 5
@@ -59,15 +61,13 @@ def canonicalize(url):
                     query += "&" + q
         return f"{scheme}://{host}{path}{params}{query}"
     except:
-        return "http://www.gov.si/"
+        return "http://gov.si/"
 
-
-frontier = ["http://www.gov.si/", "http://evem.gov.si/", "http://e-uprava.gov.si/", "http://e-prostor.gov.si/"]
-link_history = []
-current_hosts = set()
-images = []
+current_hosts = set() # zasedeni IP-ji
+locked_hosts = set() # zasedeni IP-ji posebej za robots
+current_pages = set() # trenutno brane strani (da več niti ne dostopa do iste)
 firefox_options = FirefoxOptions()
-firefox_options.add_argument("user-agent=fri-ieps-TEST")
+firefox_options.add_argument("user-agent=fri-wier-Arachnida")
 firefox_options.add_argument("--headless")
 
 
@@ -85,26 +85,13 @@ def get_sitemap_content(sitemap_url):
     if sitemap_url is None:
         return
 
-
-def map_page_type(content_type, url, hash_code):
-    # page_types = ('HTML', 'BINARY', 'DUPLICATE', 'FRONTIER')
-    if exists_same_page(hash_code):
-        return 'DUPLICATE'
-    if url in frontier:
-        return 'FRONTIER'
-    if 'html' in content_type:
-        return 'HTML'
-    for data_type in data_types:
-        if data_type in content_type:
-            return 'BINARY'
-    return None
-
-
 def find_and_save_images(soup, page_id, page_type):
     for img in soup.find_all('img'):
         img_link = img.get('src')
         if img_link is not None and page_type != 'DUPLICATE':
-            img_type = img_link.split('.')[0]
+            img_type = img_link.split('.')[-1]
+            if len(img_link) > 255:
+                continue
             insert_image(page_id, img_link, img_type, None, datetime.now())
 
 
@@ -114,123 +101,165 @@ def find_and_save_links(soup, site_id, page_id, hostname):
         if link is not None:
             if link.startswith('/'):  # stran znotraj domene
                 link = canonicalize('http://' + hostname + link)
-                if link not in frontier:
-                    # check if a page with the url exists and insert it into the DB
-                    page_new_id = check_and_insert_page(site_id, link)
-                    insert_link(page_id, page_new_id)  # insert link into the database
-                    frontier.append(link)
+                page_new_id = check_and_insert_page(site_id, link, "FRONTIER")
+                insert_link(page_id, page_new_id)  # insert link into the database
+                
             elif link.startswith('http'):  # stran izven domene
                 link = canonicalize(link)
-                if 'gov.si' in link and link not in frontier:
-                    page_new_id = check_and_insert_page(site_id, link)
+                if 'gov.si' in link:
+                    page_new_id = check_and_insert_page(site_id, link, "FRONTIER")
                     insert_link(page_id, page_new_id)  # insert link into the datase
-                    frontier.append(link)
 
 
 def crawl_page(n, thread):
-    for _ in range(n):
+    for iteration in range(n):
+        print(f"Begin thread {thread}, iteration {iteration}/{n}")
         driver = webdriver.Firefox(executable_path=WEB_DRIVER_LOCATION, options=firefox_options)
         host = ""
         hostname = ""
         url = ""
-        with lock:
-            if len(frontier) > 0:
-                for i in range(len(frontier)):  # iščemo stran na IP-ju, ki še ni zaseden
-                    url = frontier[i]
-                    if url in link_history:
-                        continue
-                    try:
-                        hostname = urlparse(url).hostname
-                        host = socket.gethostbyname(hostname)
-                        if host not in current_hosts:
-                            current_hosts.add(host)
-                            frontier.pop(i)
-                            break
-                        print("Server on " + url + " busy (" + host + ")")
-                    except:
-                        print("Wrong URL format")
-                        continue
-                link_history.append(url)
-
-                robots_url = f"http://{hostname}/robots.txt"
-                rp = urllib.robotparser.RobotFileParser()
-
-                site_id = get_site_id(hostname)
-                # check if the site exists in the DB
-                robots_content = check_robots_file(hostname)
-                robots_exist = robots_content is not None
-
-                if robots_exist:
-                    rp.set_url(robots_url)
-
-                # if the site is not the DB get sitemaps
-                if site_id is None and robots_exist:
-                    sitemap_url = rp.site_maps()
-                    # TODO implement sitemap content retrieval
-                    # sitemap_content = get_sitemap_content(sitemap_url)
-                    sitemap_content = None
-                    site_id = insert_new_site(hostname, robots_content, sitemap_content)
-
-                if robots_exist and rp.can_fetch("*", url) or not robots_exist:
-                    print(f"Retrieving web page URL '{url}' ({host}) - thread {thread}")
-                    driver.get(url)
-                else:
-                    print(f"Not allowed to retrieve web page URL '{url}' ({host}) - thread {thread}")
-                    continue
-
+        if iteration == 0:
+            robot = None
+        # prejšnja iteracija je naletela na novo stran, parsamo robots in sitemap
+        if robot is not None:
+            hostname = urlparse(robot).hostname
+            host = socket.gethostbyname(hostname)
+            # čakamo da se IP za robote sprosti, če IP takoj po izhodu iz zanke zasede druga nit, ignoriramo timeout :(
+            if host not in locked_hosts:
+                print("\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\n")
+            try:
+                with urllib.request.urlopen(robot) as response:
+                    robot_data = response.read().decode('utf-8')
+                    if "User-agent" not in robot_data[:100]: # če robots redirecta na neko drugo stran
+                        print(f"{robot} is not valid")
+                    else: 
+                        print(f"Parsed {robot} on {host}")
+                        rp = urllib.robotparser.RobotFileParser()
+                        rp.parse(StringIO(robot_data))
+                        sitemaps = rp.site_maps()
+                        TIMEOUT = rp.crawl_delay("*")
+                        if TIMEOUT is None:
+                            TIMEOUT = 5
+                        if sitemaps is not None:
+                            driver.get(sitemaps[0])
+                            update_site(hostname, robot_data, driver.page_source)
+                        else:
+                            update_site(hostname, robot_data, None)
+            except:
+                print(f"{robot} cannot be reached")
+            robot = None
+            time.sleep(TIMEOUT)
+            with lock:
+                locked_hosts.remove(host)
+        else:
+            with lock:
+                frontier = get_frontier()
+                can_parse = len(frontier) > len(current_pages)
+            if can_parse:
+                with lock:
+                    for i in range(len(frontier)):  # iščemo stran na IP-ju, ki še ni zaseden
+                        url = frontier[i]
+                        if url in current_pages:
+                            continue
+                        try:
+                            hostname = urlparse(url).hostname
+                            host = socket.gethostbyname(hostname)
+                            if host not in current_hosts and host not in locked_hosts:
+                                TIMEOUT, allowed = check_robots(hostname, url)
+                                #print(allowed)
+                                if allowed is None:
+                                    robot = f"http://{hostname}/robots.txt"
+                                    locked_hosts.add(host)
+                                elif not allowed:
+                                    print(f"PAGE {url} IS NOT ALLOWED")
+                                    continue
+                                current_hosts.add(host)
+                                current_pages.add(url)
+                                break
+                            #print(f"Server on {url} busy ({host})")
+                        except:
+                            print(f"WRONG URL FORMAT: {url} {host}")
+                            continue
+                    else:
+                        can_parse = False
+                try:
+                    if can_parse:
+                        print(f"Retrieving web page URL '{url}' ({host}) - thread {thread} i={iteration}")
+                        driver.get(url)
+                except:
+                    print(f"Couldn't reach page {url}")
             else:
                 print(f'----------------empty frontier---------------- thread {thread}')
+                TIMEOUT = 5
+                
+            time.sleep(TIMEOUT)
+            if not can_parse:
+                print(f"No urls to parse, trying again {thread}")
                 continue
+            with lock:
+                if host in current_hosts:
+                    current_hosts.remove(host)
+            html = driver.page_source
+            driver.close()
+            hash_code = calculate_hash(html)
 
-        time.sleep(TIMEOUT)
-        current_hosts.remove(host)
+            content_type = 'HTML' # map_page_type(response.headers.get('content-type'), url, hash_code)
+            site_id, page_id, is_duplicate = insert_all(hostname, "NULL", "NULL", url, html, hash_code, thread)
 
-        html = driver.page_source
-
-        # get information obout the page
-        response = requests.head(url)
-        status_code = response.status_code
-        hash_code = calculate_hash(html)
-        content_type = map_page_type(response.headers.get('content-type'), url, hash_code)
-
-        page_id = check_if_blank_page(url)
-        # save the new page into the DB
-        # links are canonicalized when they are detected
-        html_content = html if content_type != 'BINARY' else None
-        if content_type == 'DUPLICATE':
-            update_page(page_id, content_type, None, status_code, hash_code, datetime.now())
-            insert_link(page_id, get_duplicate_page_id(page_id, hash_code))
-        elif page_id is not None:
-            # če stran že obstaja (url našli med parsanjem)
-            update_page(page_id, content_type, html_content, status_code, hash_code, datetime.now())
-        else:
-            # če stran še ne obstaja v DB
-            page_id = insert_page(site_id, content_type, url, html_content, status_code, hash_code, datetime.now())
-
-        driver.close()
-
-        soup = BeautifulSoup(html)
-        with lock:
-            find_and_save_links(soup, site_id, page_id, hostname)
-            find_and_save_images(soup, page_id, content_type)
-
-    if thread == 0:
-        print("\nLink history: ")
-        for l in link_history:
-            print(l)
-        print("\nFrontier: ")
-        for l in frontier:
-            print(l)
-        print("\nImages: ")
-        for img in images:
-            print(img)
-
+            with lock:
+                if url in current_pages:
+                    current_pages.remove(url)
+            if is_duplicate:
+                insert_link(page_id, get_duplicate_page_id(page_id, hash_code))
+            else:
+                soup = BeautifulSoup(html)
+                find_and_save_links(soup, site_id, page_id, hostname)
+                find_and_save_images(soup, page_id, content_type)        
 
 lock = threading.Lock()
 database_port = 5431
 
+def insert_all(domain, robots_content, sitemap_content, url, html, hash_code, thread):
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
 
-def insert_new_site(domain, robots_content, sitemap_content):
+    with lock:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM crawldb.site WHERE domain = %s", (domain,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("INSERT INTO crawldb.site (domain, robots_content, sitemap_content) VALUES(%s, %s, %s) RETURNING id",
+                        (domain, robots_content, sitemap_content))
+            row = cur.fetchone()
+        site_id = row[0]
+        cur.execute("SELECT id FROM crawldb.page WHERE url = %s", (url,))
+        page_id = cur.fetchone()[0]
+        content_type = "HTML"
+        file_type = url.split('.')[-1].upper()
+        
+        if exists_same_page(hash_code):
+            content_type = 'DUPLICATE'
+            #cur.execute("UPDATE * FROM crawldb.link WHERE from_page = %s AND to_page = %s", (from_page, to_page))
+        if any(file_type == s for s in ["PDF", "DOC", "DOCX", "PPT", "PPTX"]):
+            content_type = 'BINARY'
+            html = None
+            insert_page_data(page_id, file_type, None)
+
+        
+        cur.execute("UPDATE crawldb.page SET site_id=%s, page_type_code=%s, html_content=%s, http_status_code=%s, hash_code=%s, "
+        "accessed_time=%s WHERE id = %s",
+        (site_id, content_type, html, 0, hash_code, datetime.now(), page_id))
+        #(page_type, html, status_code, hash_code, accessed_time, page_id))
+
+        #cur.execute(
+        #"INSERT INTO crawldb.page (site_id, page_type_code, url, html_content, http_status_code, hash_code, "
+        #"accessed_time) VALUES(%s, %s, %s, %s, %s, %s, %s)",
+        #(site_id, page_type_code, url, html, 0, "NULL", datetime.now()))
+        cur.close()
+    conn.close()
+    return site_id, page_id, content_type == "DUPLICATE"
+    
+def insert_site(domain, robots_content, sitemap_content):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
 
@@ -238,85 +267,58 @@ def insert_new_site(domain, robots_content, sitemap_content):
         cur = conn.cursor()
         cur.execute("INSERT INTO crawldb.site (domain, robots_content, sitemap_content) VALUES(%s, %s, %s)",
                     (domain, robots_content, sitemap_content))
-        row = cur.fetchone()
-        result = row[0] if row is not None else None
 
         cur.close()
     conn.close()
-    return result
 
-
-def get_site_id(domain):
+def update_site(domain, robots_content, sitemap_content):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
-
     cur = conn.cursor()
-    cur.execute("SELECT id FROM crawldb.site WHERE domain = %s", domain)
-
-    row = cur.fetchone()
-    result = row[0] if row is not None else None
+    cur.execute("UPDATE crawldb.site SET robots_content=%s, sitemap_content=%s WHERE domain=%s",
+                (robots_content, sitemap_content, domain))
 
     cur.close()
     conn.close()
-    return result
-
-
-def insert_page(site_id, page_type_code, url, html_content, https_status_code, hash_code, accessed_time):
-    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
-    conn.autocommit = True
-
-    # If a page is of type HTML, its content should be stored as a value within html_content attribute, otherwise (if
-    # crawler detects a binary file - e.g. .doc), html_content is set to NULL and a record in the page_data table is
-    # created
-    # The duplicate page should not have set the html_content value and should be linked to a duplicate
-    # version of a page.
-    if page_type_code not in page_types:
-        return
-    with lock:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO crawldb.page (site_id, page_type_code, url, html_content, https_status_code, hash_code, "
-            "accessed_time) VALUES(%s, %s, %s, %s, %s, %s, %s)",
-            (site_id, page_type_code, url, html_content, https_status_code, hash_code, accessed_time))
-        row = cur.fetchone()
-        result = row[0] if row is not None else None
-        cur.close()
-    conn.close()
-    return result
-
-
-def check_and_insert_page(site_id, url):
+    
+def check_robots(domain, url):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
 
     cur = conn.cursor()
-    cur.execute("SELECT id FROM crawldb.site WHERE url = %s", url)
-
+    cur.execute("SELECT robots_content FROM crawldb.site WHERE domain=%s",
+                (domain,))
     row = cur.fetchone()
-    # page with this link does not exist yet, insert it into the DB
-    new_page_id = None
+    
+    cur.close()
+    conn.close()
+    if row is None:
+        return 5, None
     if row[0] is None:
-        new_page_id = insert_page(site_id, None, url, None, None, None, None)
-
-    cur.close()
-    conn.close()
-    return new_page_id
-
-
-def check_if_blank_page(url):
+        return 5, True
+    rp = urllib.robotparser.RobotFileParser()
+    rp.parse(StringIO(row[0]))
+    delay = rp.crawl_delay("*")
+    if delay is None:
+        delay = 5
+    return delay, rp.can_fetch("*", url)
+    
+def check_and_insert_page(site_id, url, page_type):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
-
     cur = conn.cursor()
-    cur.execute("SELECT id FROM crawldb.site WHERE url = %s AND hash_code IS NULL", url)
-    row = cur.fetchone()
-
-    # page with this link does not exist yet, insert it into the DB
-    result = row[0] if row is not None else None
-    cur.close()
+    with lock:
+        cur.execute("SELECT id FROM crawldb.page WHERE url = %s", (url,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+            "INSERT INTO crawldb.page (site_id, page_type_code, url, html_content, http_status_code, hash_code, "
+            "accessed_time) VALUES(%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (site_id, page_type, url, "", 0, "", datetime.now()))
+            row = cur.fetchone()
+        cur.close()
     conn.close()
-    return result
-
+    return row[0]
 
 def get_duplicate_page_id(page_id, hash_code):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
@@ -332,23 +334,28 @@ def get_duplicate_page_id(page_id, hash_code):
     conn.close()
     return result
 
-
-def update_page(page_id, page_type, html, status_code, hash_code, accessed_time):
+def exists_same_page(hash_code):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
-
     cur = conn.cursor()
-    cur.execute("UPDATE crawldb.page SET page_type_code=%s, html_content=%s, http_status_code=%s, hash_code=%s, "
-                "accessed_time=%s WHERE page_id = %s",
-                (page_type, html, status_code, hash_code, accessed_time, page_id))
+    cur.execute("SELECT id FROM crawldb.page WHERE hash_code = %s", (hash_code,))
     row = cur.fetchone()
-
-    # page with this link does not exist yet, insert it into the DB
-    result = row[0] if row is not None else None
+    result = True if row is not None else False
     cur.close()
     conn.close()
     return result
 
+def delete_page(page_id, page_type, html, status_code, hash_code, accessed_time):
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("DELETE FROM crawldb.page WHERE page_id = %s",
+                (page_type, html, status_code, hash_code, accessed_time, page_id))
+
+    # page with this link does not exist yet, insert it into the DB
+    cur.close()
+    conn.close()
 
 def insert_image(page_id, filename, content_type, data, accessed_time):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
@@ -368,62 +375,170 @@ def insert_image(page_id, filename, content_type, data, accessed_time):
         cur.close()
     conn.close()
 
-
 def insert_link(from_page, to_page):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
 
     with lock:
         cur = conn.cursor()
-        cur.execute("INSERT INTO crawldb.link (from_page, to_page)) VALUES(%s, %s)",
-                    (from_page, to_page))
+        cur.execute("SELECT * FROM crawldb.link WHERE from_page = %s AND to_page = %s", (from_page, to_page))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("INSERT INTO crawldb.link (from_page, to_page) VALUES(%s, %s)", (from_page, to_page))
         cur.close()
     conn.close()
-
 
 def insert_page_data(page_id, data_type_code, data):
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
-
+    print("DATA INSERT " + str(page_id))
     # List all other content (.pdf, .doc, .docx, .ppt and .pptx) in the page_data table - there is no need to populate data field
-    with lock:
-        cur = conn.cursor()
-        if data is not None:
-            cur.execute("INSERT INTO crawldb.page_data (page_id, data_type_code, data)) VALUES(%s, %s, %s)",
-                        (page_id, data_type_code, data))
-        else:
-            cur.execute("INSERT INTO crawldb.page_data (page_id, data_type_code)) VALUES(%s, %s)",
-                        (page_id, data_type_code))
-        cur.close()
+    cur = conn.cursor()
+    if data is not None:
+        cur.execute("INSERT INTO crawldb.page_data (page_id, data_type_code, data) VALUES(%s, %s, %s)",
+                    (page_id, data_type_code, data))
+    else:
+        cur.execute("INSERT INTO crawldb.page_data (page_id, data_type_code) VALUES(%s, %s)",
+                    (page_id, data_type_code))
+    cur.close()
     conn.close()
 
-
-def exists_same_page(hash_code):
+def get_frontier():
     conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
     conn.autocommit = True
 
     cur = conn.cursor()
-    cur.execute("SELECT id FROM crawldb.page WHERE hash_code = %s", hash_code)
+    cur.execute("SELECT url FROM crawldb.page WHERE page_type_code = 'FRONTIER' ORDER BY id")
 
-    row = cur.fetchone()
-    result = True if row is not None else False
+    rows = cur.fetchall()
 
     cur.close()
     conn.close()
-    return result
+    return [row[0] for row in rows]
 
+def get_pages():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
 
-def para(num_workers, pages_per_thread):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM crawldb.page WHERE NOT page_type_code = 'FRONTIER' ORDER BY id")
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return rows
+
+def get_sites():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM crawldb.site ORDER BY id")
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return rows
+
+def get_images():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM crawldb.image ORDER BY id")
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return rows
+
+def get_page_data():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM crawldb.page_data ORDER BY id")
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return rows
+
+def get_links():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM crawldb.link ORDER BY from_page")
+
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return rows
+
+def reset_db():
+    conn = psycopg2.connect(host="localhost", port=database_port, user=DB_USER, password=DB_PWD)
+    conn.autocommit = True
+
+    cur = conn.cursor()
+    cur.execute("DROP SCHEMA IF EXISTS crawldb CASCADE")
+    with open('init-scripts/crawldb.sql', 'r') as file:
+        sql = file.read()
+    cur.execute(sql)
+
+    cur.close()
+    conn.close()
+
+    
+def parallel(num_workers, pages_per_thread):
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-        print(f"\n ... executing workers ...\n")
-        for i in range(num_workers):
-            executor.submit(crawl_page, pages_per_thread, i)
+        print(f"\nExecuting {num_workers} workers for {pages_per_thread} cycles\n")
+        for thread_num in range(num_workers):
+            executor.submit(crawl_page, pages_per_thread, thread_num)
 
 
-pages = 25
-workers = 5
+pages = 10
+workers = 4
 pages_per_worker = pages // workers
 
+print(datetime.now())
+
 print(f"Crawling {pages_per_worker * workers} pages with {workers} workers")
-para(workers, pages_per_worker)
-# crawl_page(10,0)
+
+reset_db()
+insert_site("dummy-site-for-seeding-frontier.gov.si", "NULL", "NULL")
+check_and_insert_page(1, "http://gov.si/", "FRONTIER")
+check_and_insert_page(1, "http://www.e-prostor.gov.si/", "FRONTIER")
+check_and_insert_page(1, "http://evem.gov.si/", "FRONTIER")
+check_and_insert_page(1, "http://e-uprava.gov.si/", "FRONTIER")
+
+parallel(workers, pages_per_worker)
+#crawl_page(40,0)
+
+print(datetime.now())
+
+print(f"FRONTIER LENGTH {len(get_frontier())}")
+#for i in get_frontier():
+    #print(i)
+print(f"\nPAGES LENGTH {len(get_pages())}")
+#for i in get_pages():
+    #print(i[3])
+print(f"\nSITES LENGTH {len(get_sites())}")
+print("\nSITES ")
+for i in get_sites():
+    print(i[1])
+print(f"\nPAGE DATA LENGTH {len(get_page_data())}")
+print("\nPAGE DATA")
+for i in get_page_data():
+    print(i)
+print(f"\nIMAGES LENGTH {len(get_images())}")
+#for i in get_images():
+    #print(i)
+print(f"\nLINKS LENGTH {len(get_links())}")
+#for i in get_links():
+    #print(i)
