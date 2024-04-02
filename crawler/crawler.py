@@ -89,13 +89,10 @@ def find_and_save_links(soup, site_id, page_id, hostname):
             url_start_index = onclick.find("'") + 1
             url_end_index = onclick.find("'", url_start_index)
             if url_start_index != -1 and url_end_index != -1:
-                url = onclick[url_start_index:url_end_index]
-                print("ONCLICK_URL:", url)
+                link = onclick[url_start_index:url_end_index]
                 parse_link(link, site_id, page_id, hostname, False)
     for area in soup.find_all('area'):
         link = area.get('href')
-        if link is not None:
-            print("AREA URL ", link)
         parse_link(link, site_id, page_id, hostname, False)
     for link in soup.find_all('link'):
         link = link.get('href')
@@ -138,36 +135,40 @@ def crawl_page(n, thread, drivers, max_pages):
             robot = None
         # prejšnja iteracija je naletela na novo stran, parsamo robots in sitemap
         if robot is not None:
-            hostname = urlparse(robot).hostname
-            host = socket.gethostbyname(hostname)
-            # čakamo da se IP za robote sprosti, če IP takoj po izhodu iz zanke zasede druga nit, ignoriramo timeout :(
-            if host not in locked_hosts:
-                print("\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\n")
             try:
-                with urllib.request.urlopen(robot) as response:
-                    robot_data = response.read().decode('utf-8')
-                    if "User-agent" not in robot_data[:300]: # če robots redirecta na neko drugo stran
-                        print(f"Thread {thread}, iter {iteration}/{n} | {robot} is not valid")
-                    else: 
-                        print(f"Thread {thread}, iter {iteration}/{n} | Parsed {robot} on {host}")
-                        rp = urllib.robotparser.RobotFileParser()
-                        rp.parse(StringIO(robot_data))
-                        sitemaps = rp.site_maps()
-                        TIMEOUT = rp.crawl_delay("*")
-                        if TIMEOUT is None:
-                            TIMEOUT = 5
-                        if sitemaps is not None:
-                            driver.get(sitemaps[0])
-                            update_site(hostname, robot_data, driver.page_source)
-                        else:
-                            update_site(hostname, robot_data, None)
+                hostname = urlparse(robot).hostname
+                host = socket.gethostbyname(hostname)
+                # čakamo da se IP za robote sprosti, če IP takoj po izhodu iz zanke zasede druga nit, ignoriramo timeout :(
+                if host not in locked_hosts:
+                    print("\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\nERROR ERROR\n")
+                try:
+                    with urllib.request.urlopen(robot) as response:
+                        robot_data = response.read().decode('utf-8')
+                        if "User-agent" not in robot_data[:300]: # če robots redirecta na neko drugo stran
+                            print(f"Thread {thread}, iter {iteration}/{n} | {robot} is not valid")
+                        else: 
+                            print(f"Thread {thread}, iter {iteration}/{n} | Parsed {robot} on {host}")
+                            rp = urllib.robotparser.RobotFileParser()
+                            rp.parse(StringIO(robot_data))
+                            sitemaps = rp.site_maps()
+                            TIMEOUT = rp.crawl_delay("*")
+                            if TIMEOUT is None:
+                                TIMEOUT = 5
+                            if sitemaps is not None:
+                                driver.get(sitemaps[0])
+                                update_site(hostname, robot_data, driver.page_source)
+                            else:
+                                update_site(hostname, robot_data, None)
+                except:
+                    print(f"Thread {thread}, iter {iteration}/{n} | {robot} cannot be reached")
+                robot = None
+                time.sleep(TIMEOUT)
             except:
-                print(f"Thread {thread}, iter {iteration}/{n} | {robot} cannot be reached")
-            robot = None
-            time.sleep(TIMEOUT)
-            with lock:
-                if host in locked_hosts:
-                    locked_hosts.remove(host)
+                print("Unknown error")
+            finally:
+                with lock:
+                    if host in locked_hosts:
+                        locked_hosts.remove(host)
         else:
             try:
                 with lock:
@@ -206,6 +207,10 @@ def crawl_page(n, thread, drivers, max_pages):
                             except:
                                 print(f"Thread {thread}, iter {iteration}/{n} | WRONG URL FORMAT: {url} {host}")
                                 update_page_type(url, 404, "HTML")
+                                if host in current_hosts:
+                                    current_hosts.remove(host)
+                                if url in current_pages:
+                                    current_pages.remove(url)
                                 continue
                         else:
                             can_parse = False
@@ -225,13 +230,17 @@ def crawl_page(n, thread, drivers, max_pages):
                     TIMEOUT = 5
 
                 time.sleep(TIMEOUT)
-                if not can_parse:
-                    print(f"Thread {thread}, iter {iteration}/{n} | No urls to parse, trying again")
-                    #driver.close()
-                    continue
                 with lock:
                     if host in current_hosts:
                         current_hosts.remove(host)
+                if not can_parse:
+                    print(f"Thread {thread}, iter {iteration}/{n} | No urls to parse, trying again")
+                    with lock:
+                        if url in current_pages:
+                            current_pages.remove(url)
+                    #driver.close()
+                    continue
+
                 html = driver.page_source
                 #driver.close()
                 hash_code = calculate_hash(html)
@@ -248,8 +257,8 @@ def crawl_page(n, thread, drivers, max_pages):
                     soup = BeautifulSoup(html)
                     if not disable_frontier:
                         find_and_save_links(soup, site_id, page_id, hostname)
-                    else:
-                        print("frontier disabled")
+                    #else:
+                        #print("frontier disabled")
                     find_and_save_images(soup, page_id, content_type)
             except Exception as error:
                 print(f"ERROR INSIDE LOOP: {thread} {error}")
@@ -563,7 +572,7 @@ def parallel(num_workers, pages_per_thread, drivers):
         for thread_num in range(num_workers):
             executor.submit(crawl_page, pages_per_thread, thread_num, drivers, num_workers * pages_per_thread)
 
-pages = 2000
+pages = 50000
 workers = 5
 pages_per_worker = pages // workers
 
@@ -589,23 +598,25 @@ check_and_insert_page(1, "http://e-uprava.gov.si/", "FRONTIER")
 
 parallel(workers, pages_per_worker, drivers)
 #crawl_page(10,0)
-
+for driver in drivers:
+    driver.close()
+    
 print(datetime.now())
 
-print(f"FRONTIER LENGTH {len(get_frontier())}")
+print(f"\nFRONTIER LENGTH {len(get_frontier())}")
 #for i in get_frontier():
     #print(i)
 print(f"\nPAGES LENGTH {len(get_pages())}")
-for i in get_pages():
-    print(i[3])
+#for i in get_pages():
+    #print(i[3])
 print(f"\nSITES LENGTH {len(get_sites())}")
 print("\nSITES ")
 for i in get_sites():
     print(i[1])
 print(f"\nPAGE DATA LENGTH {len(get_page_data())}")
 print("\nPAGE DATA")
-for i in get_page_data():
-    print(i)
+#for i in get_page_data():
+    #print(i)
 print(f"\nIMAGES LENGTH {len(get_images())}")
 #for i in get_images():
     #print(i)
