@@ -35,7 +35,7 @@ def regexIntoJson(regex, text, data, keys):
     regex = re.compile(regex)
     match = regex.findall(text)
     #match = re.search(regex, text)
-    if match is not None:
+    if match is not None and match != []:
         i = 0
         for k in keys:
             if type(match[0]) is tuple:
@@ -48,7 +48,7 @@ def regexIntoJson(regex, text, data, keys):
 def regexIntoJson1(regex, text, keys):
     regex = re.compile(regex)
     match = regex.findall(text)
-    if match is not None:
+    if match is not None and match != []:
         i = 0
         for m in match:
             m = m[1:]
@@ -75,6 +75,8 @@ for i in range(2):
                   html, data, ["SubTitle"])
     regexIntoJson('''class="lead">(.*)<\/''',
                   html, data, ["Lead"])
+    regexIntoJson('''<p class="Body"><\/p><p class="Body">(.*)\n''',
+                  html, data, ["Content"])
     #TO DO content
     with open(f"rtv{i+1}.json", "w") as outfile:
         outfile.write(json.dumps(data, indent=4))
