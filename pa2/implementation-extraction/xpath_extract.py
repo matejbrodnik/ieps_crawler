@@ -4,8 +4,8 @@ import json
 OVERSTOCK_PREFIX = '//table/tbody/tr/td[5]/table/tbody/tr[2]/td//table/tbody/tr/td/table/tbody/tr/td[2]'
 
 
-def extract_rtvslo(htmlstr):
-    tree = html.fromstring(htmlstr)
+def extract_rtvslo(htmls):
+    tree = html.fromstring(htmls)
 
     title = tree.xpath('//header[@class="article-header"]/h1/text()')
     sub_title = tree.xpath('//header[@class="article-header"]/div[@class="subtitle"]/text()')
@@ -30,9 +30,9 @@ def extract_rtvslo(htmlstr):
     print(json.dumps(data, indent=4))
 
 
-def extract_overstock(htmlstr):
+def extract_overstock(htmls):
     # Parsing the page
-    tree = html.fromstring(htmlstr)
+    tree = html.fromstring(htmls)
 
     # Get element using XPath
     titles = tree.xpath(f'{OVERSTOCK_PREFIX}/a/b/text()')
@@ -57,5 +57,36 @@ def extract_overstock(htmlstr):
         data[f"page{i + 1}"]["Saving"] = savings[i]
         data[f"page{i + 1}"]["SavingPercent"] = savings_pct[i]
         data[f"page{i + 1}"]["Content"] = content[i]
+
+    print(json.dumps(data, indent=4))
+
+
+def extract_emka(htmls):
+    tree = html.fromstring(htmls)
+
+    titles_d = tree.xpath('//div/div[contains(@class, "GO-Results-Naziv ")]/span/text()')[1:]
+
+    titles = []
+    for t in titles_d:
+        titles.append(t.strip())
+    titles = tree.xpath('//a[contains(@class, "ie-book-title")]/text()')
+    author = tree.xpath('//div[@class="book-item-information tw-relative"]/a[2]/text()')
+    binding = tree.xpath('//div[@class="book-item-information tw-relative"]/div[3]/text()')
+    price = tree.xpath('//div[@class="book-item-buy"]/div/div/span/text()')
+
+    authors = []
+    bindings = []
+    for a in author:
+        authors.append(a.strip())
+    for b in binding:
+        bindings.append(b.strip().split(' ')[1])
+
+    data = {}
+    for i in range(len(authors)):
+        data[f"page{i + 1}"] = {}
+        data[f"page{i + 1}"]["Title"] = titles[i]
+        data[f"page{i + 1}"]["Author"] = authors[i]
+        data[f"page{i + 1}"]["Binding"] = bindings[i]
+        data[f"page{i + 1}"]["Price"] = price[i]
 
     print(json.dumps(data, indent=4))

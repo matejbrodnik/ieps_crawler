@@ -1,8 +1,6 @@
 import argparse
 import os
-import json
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.chrome.service import Service
 
@@ -20,7 +18,10 @@ overstock2 = os.path.join(current_dir, f"{INPUT_DIR}/overstock.com/jewelry02.htm
 rtv1 = os.path.join(current_dir, f"{INPUT_DIR}/rtvslo.si/Audi A6 50 TDI quattro_ nemir v premijskem razredu - RTVSLO.si.html")
 rtv2 = os.path.join(current_dir, f"{INPUT_DIR}/rtvslo.si/Volvo XC 40 D4 AWD momentum_ suvereno med najboljše v razredu - RTVSLO.si.html")
 
-urls = [rtv1, rtv2, overstock1, overstock2]
+emka1 = os.path.join(current_dir, f"{INPUT_DIR}/emka.si/Iskanje_ najdeni rezultati (11) za »alamut«.html")
+emka2 = os.path.join(current_dir, f"{INPUT_DIR}/emka.si/Iskanje_ najdeni rezultati (18) za »harry potter in«.html")
+
+urls = [rtv1, rtv2, overstock1, overstock2, emka1, emka2]
 htmls = []
 
 firefox_options = FirefoxOptions()
@@ -50,15 +51,18 @@ if __name__ == '__main__':
 
     if extr_type == "A":
         # using regular expressions
-        regex.regex_rtvslo(htmls[:2])
-        regex.regex_overstock(htmls[2:])
+        regex.regex_rtvslo(htmls[0])
+        regex.regex_rtvslo(htmls[1])
+        regex.regex_overstock(htmls[2])
+        regex.regex_overstock(htmls[3])
     elif extr_type == "B":
         # using xpath
         xpath_extract.extract_rtvslo(htmls[0])
         xpath_extract.extract_rtvslo(htmls[1])
         xpath_extract.extract_overstock(htmls[2])
         xpath_extract.extract_overstock(htmls[3])
-        pass
+        xpath_extract.extract_emka(htmls[4])
+        xpath_extract.extract_emka(htmls[5])
     elif extr_type == "C":
         # using roadRunner algorithm
         pass
