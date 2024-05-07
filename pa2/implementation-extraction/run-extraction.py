@@ -53,8 +53,11 @@ if __name__ == '__main__':
         regex.regex_rtvslo(htmls[:2])
         regex.regex_overstock(htmls[2:])
     elif extr_type == "B":
-        xpath_extract.extract_overstock(htmls[2])
         # using xpath
+        xpath_extract.extract_rtvslo(htmls[0])
+        xpath_extract.extract_rtvslo(htmls[1])
+        xpath_extract.extract_overstock(htmls[2])
+        xpath_extract.extract_overstock(htmls[3])
         pass
     elif extr_type == "C":
         # using roadRunner algorithm
