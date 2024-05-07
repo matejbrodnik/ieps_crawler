@@ -7,6 +7,7 @@ from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.chrome.service import Service
 
 import regex
+import xpath_extract
 
 WEB_DRIVER_LOCATION = "./geckodriver"
 current_dir = os.getcwd()
@@ -28,6 +29,10 @@ firefox_options.add_argument("user-agent=fri-ieps-TEST")
 service = Service(executable_path=WEB_DRIVER_LOCATION)
 driver = webdriver.Firefox(service=service, options=firefox_options)
 
+# driver.get("file://" + overstock1)
+# with open(f"overstock.html", "w") as outfile:
+#     outfile.write(driver.page_source)
+
 for url in urls:
     driver.get("file://" + url)
     htmls.append(driver.page_source)
@@ -48,6 +53,7 @@ if __name__ == '__main__':
         regex.regex_rtvslo(htmls[:2])
         regex.regex_overstock(htmls[2:])
     elif extr_type == "B":
+        xpath_extract.extract_overstock(htmls[2])
         # using xpath
         pass
     elif extr_type == "C":
