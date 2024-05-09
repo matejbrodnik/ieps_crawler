@@ -55,6 +55,8 @@ if __name__ == '__main__':
         regex.regex_rtvslo(htmls[1])
         regex.regex_overstock(htmls[2])
         regex.regex_overstock(htmls[3])
+        regex.extract_emka(htmls[4])
+        regex.extract_emka(htmls[5])
     elif extr_type == "B":
         # using xpath
         xpath_extract.extract_rtvslo(htmls[0])

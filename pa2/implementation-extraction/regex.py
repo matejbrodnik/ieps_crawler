@@ -62,3 +62,31 @@ def regex_overstock(htmls):
 
     # with open(f"overstock{i+1}.json", "w") as outfile:
     #     outfile.write(json.dumps(data, indent=4))
+
+
+def extract_emka(htmls):
+    data = {}
+
+    title_pattern = '''class="ie-book-title[^>]*>(.*?)<span'''
+    author_pattern = r'<li class="ie-custom-grid tw-relative".*?<a[^>]*class="tw-text-darkblue tw-text-sm tw-underline"[^>]*>\s*(.*?)\s*</a>'
+    binding_pattern = '''<div class="product_var tw-text-darkblue tw-text-sm tw-font-bold">Vezava:\s*(.*?)\s*</div>'''
+    price_pattern = r'<li class="ie-custom-grid tw-relative".*?<div class="book-item-buy">\s*<div[^>]*>\s*<div[^>]*>\s*<span[^>]*>(.*?)</span>'
+    r = re.compile(title_pattern)
+    titles = r.findall(htmls)
+
+    authors = re.findall(author_pattern, htmls, re.DOTALL)
+
+    r = re.compile(binding_pattern)
+    bindings = r.findall(htmls, re.DOTALL)
+
+    prices = re.findall(price_pattern, htmls, re.DOTALL)
+
+    for i in range(len(titles)):
+        page = f'page{i+1}'
+        data[page] = {}
+        data[page]["Title"] = titles[i]
+        data[page]["Author"] = authors[i]
+        data[page]["Binding"] = bindings[i]
+        data[page]["Price"] = prices[i]
+
+    print(json.dumps(data, indent=4))
