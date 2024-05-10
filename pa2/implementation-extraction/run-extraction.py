@@ -6,6 +6,7 @@ from selenium.webdriver.chrome.service import Service
 
 import regex
 import xpath_extract
+import roadrunner
 
 WEB_DRIVER_LOCATION = "./geckodriver"
 current_dir = os.getcwd()
@@ -67,4 +68,6 @@ if __name__ == '__main__':
         xpath_extract.extract_emka(htmls[5])
     elif extr_type == "C":
         # using roadRunner algorithm
-        pass
+        roadrunner.get_wrapper(htmls[0], htmls[1])
+        roadrunner.get_wrapper(htmls[2], htmls[3])
+        roadrunner.get_wrapper(htmls[4], htmls[5])
